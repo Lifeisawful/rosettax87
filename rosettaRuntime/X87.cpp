@@ -249,10 +249,53 @@ void x87_fadd_f64(X87State *a1, unsigned long long a2) {
 #endif
 }
 
-void x87_fbld(X87State *a1, unsigned long long a2, unsigned long long a3) {
-  MISSING(1, "x87_fbld\n", 10);
-  orig_x87_fbld(a1, a2, a3);
+double BCD2Double(uint8_t bcd[10]) {
+  uint64_t tmp = 0;
+  uint64_t mult = 1;
+  uint8_t piece;
+
+  for (int i=0; i<9; ++i) {
+      piece = bcd[i];
+      tmp += mult * (piece & 0x0F);
+      mult *= 10;
+      tmp += mult * ((piece >> 4) & 0x0F);
+      mult *= 10;
+  }
+
+  piece = bcd[9];
+  tmp += mult * (piece & 0x0F);
+
+  double value = static_cast<double>(tmp);
+
+  if (piece & 0x80) {
+      value = -value; 
+  }
+
+  return value;
 }
+
+void x87_fbld(X87State *a1, unsigned long long a2, unsigned long long a3) {
+  SIMDGuard simd_guard;
+  LOG(1, "x87_fbld\n", 10);
+
+#if defined(X87_FBLD)
+  // set C1 to 0
+  a1->status_word &= ~X87StatusWordFlag::kConditionCode1;
+
+  uint8_t bcd[10];
+  memcpy(bcd, &a2, 8);           // Copy 8 bytes from a2
+  memcpy(bcd + 8, &a3, 2);       // Copy 2 bytes from a3
+
+  auto value = BCD2Double(bcd);
+
+  //Add space on the stack and push the converted BCD
+  a1->push();
+  a1->set_st(0, value);
+#else
+  orig_x87_fbld(a1, a2, a3);
+#endif
+}
+
 void x87_fbstp(X87State const *a1) {
   MISSING(1, "x87_fbstp\n", 11);
   orig_x87_fbstp(a1);
@@ -1853,18 +1896,34 @@ void x87_fxch(X87State *a1, unsigned int st_offset) {
   orig_x87_fxch(a1, st_offset);
 #endif
 }
-void x87_fxtract(X87State *a1) {
-  MISSING(1, "x87_fxtract\n", 13);
-  orig_x87_fxtract(a1);
-}
 
-// Replace ST(1) with (ST(1) ∗ log2ST(0)) and pop the register stack.
-void x87_fyl2x(X87State *state) {
+//Notes: I believe this implementation is reasonable
+void x87_fxtract(X87State *a1) {
   SIMDGuard simd_guard;
 
-  LOG(1, "x87_fyl2x\n", 12);
+  LOG(1, "x87_fxtract\n", 13);
 
-#if defined(X87_FYL2X)
+#if defined(X87_FXTRACT)
+  // Get st0 value
+  auto st0 = a1->get_st(0);
+
+  //Get components of st0
+  X87Float80 result = doubleToX87Components(st0);
+
+  // Store exponent in ST(0)
+  a1->set_st(0, result.exponent);
+
+  // Make room on the stack and push the mantissa (significand)
+  a1->push();
+  a1->set_st(0, result.mantissa);
+
+#else
+  orig_x87_fxtract(a1);
+#endif
+}
+
+void fyl2x_common(X87State *state, float constant){
+  // Clear condition code 1
   state->status_word &= ~X87StatusWordFlag::kConditionCode1;
 
   // Get x from ST(0) and y from ST(1)
@@ -1872,21 +1931,37 @@ void x87_fyl2x(X87State *state) {
   auto st1 = state->get_st(1);
 
   // Calculate y * log2(x)
-  auto result = st1 * (log2(st0));
+  auto result = st1 * (log2(st0+constant));
 
   // Pop ST(0)
   state->pop();
 
   // Store result in new ST(0)
   state->set_st(0, result);
+}
+
+// Replace ST(1) with (ST(1) ∗ log2ST(0)) and pop the register stack.
+void x87_fyl2x(X87State *state) {
+  SIMDGuard simd_guard;
+  LOG(1, "x87_fyl2x\n", 12);
+
+#if defined(X87_FYL2X)
+  fyl2x_common(state, 0.0);
 #else
   orig_x87_fyl2x(state);
 #endif
 }
 
-void x87_fyl2xp1(X87State *a1) {
-  MISSING(1, "x87_fyl2xp1\n", 13);
-  orig_x87_fyl2xp1(a1);
+// Replace ST(1) with (ST(1) ∗ log2ST(0 + 1.0)) and pop the register stack.
+void x87_fyl2xp1(X87State *state) {
+  SIMDGuard simd_guard;
+  LOG(1, "x87_fyl2xp1\n", 14);
+
+#if defined(X87_FYL2XP1)
+  fyl2x_common(state, 1.0);
+#else
+  orig_x87_fyl2xp(state);
+#endif
 }
 
 X87_TRAMPOLINE(sse_pcmpestri, x8)
