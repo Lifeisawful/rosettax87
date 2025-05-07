@@ -717,31 +717,6 @@ void x87_fidivr(X87State *a1, int a2) {
 #endif
 }
 
-X87Float80 doubleToX87Components(int64_t value) {
-
-  uint64_t abs_value =
-      value >= 0 ? static_cast<uint64_t>(value) : static_cast<uint64_t>(-value);
-
-  uint16_t leading_zeros =
-      abs_value ? static_cast<uint16_t>(__builtin_clzll(abs_value)) : 64;
-  uint64_t mantissa =
-      abs_value ? ((abs_value << leading_zeros) | 0x8000000000000000ULL) : 0;
-
-  uint16_t exponent;
-  if (abs_value == 0) {
-    exponent = 0;
-  } else {
-    exponent =
-        static_cast<uint16_t>((value < 0 ? 0x8000 : 0) - leading_zeros + 16446);
-  }
-
-  X87Float80 result;
-  result.mantissa = mantissa;
-  result.exponent = exponent;
-
-  return result;
-}
-
 // Converts the signed-integer source operand into double extended-precision
 // floating-point format and pushes the value onto the FPU register stack. The
 // source operand can be a word, doubleword, or quadword integer. It is loaded
@@ -1897,32 +1872,43 @@ void x87_fxch(X87State *a1, unsigned int st_offset) {
 #endif
 }
 
-//Notes: I believe this implementation is reasonable
 void x87_fxtract(X87State *a1) {
   SIMDGuard simd_guard;
 
   LOG(1, "x87_fxtract\n", 13);
 
 #if defined(X87_FXTRACT)
-  // Get st0 value
   auto st0 = a1->get_st(0);
 
-  //Get components of st0
-  X87Float80 result = doubleToX87Components(st0);
+  // If the floating-point zero-divide exception (#Z) is masked and the source
+  // operand is zero, an exponent value of –∞ is stored in register ST(1) and 0
+  // with the sign of the source operand is stored in register ST(0).
+  if ((a1->control_word & X87ControlWord::kZeroDivideMask) != 0 && st0 == 0.0) {
+    a1->set_st(1, -std::numeric_limits<double>::infinity());
+    a1->set_st(0, copysign(0.0, st0));
+    return;
+  }
 
-  // Store exponent in ST(0)
-  a1->set_st(0, result.exponent);
+  if (isinf(st0)) {
+    a1->set_st(0, st0);
+    a1->push();
+    a1->set_st(0, std::numeric_limits<double>::infinity());
+    return;
+  }
 
-  // Make room on the stack and push the mantissa (significand)
+  auto e = std::floor(log2(abs(st0)));
+  auto m = st0 / pow(2.0, e);
+
+  a1->set_st(0, e);
+
   a1->push();
-  a1->set_st(0, result.mantissa);
-
+  a1->set_st(0, m);
 #else
   orig_x87_fxtract(a1);
 #endif
 }
 
-void fyl2x_common(X87State *state, float constant){
+void fyl2x_common(X87State *state, double constant){
   // Clear condition code 1
   state->status_word &= ~X87StatusWordFlag::kConditionCode1;
 
