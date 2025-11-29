@@ -180,21 +180,22 @@ private:
 public:
   bool adjustMemoryProtection(uint64_t address, vm_prot_t protection,
                               mach_vm_size_t size = 0) {
+    long page_size = 0x1000;
     mach_vm_address_t region =
-        address & ~(vm_page_size - 1); // align to page boundary
+        address & ~(page_size - 1); // align to page boundary
     // align size to page boundary
     if (size == 0) {
-      size = vm_page_size;
+      size = page_size;
     }
-    size = (size + vm_page_size - 1) & ~(vm_page_size - 1);
+    size = (size + page_size - 1) & ~(page_size - 1);
 
     printf("Adjusting memory protection at 0x%llx - 0x%llx\n",
            (unsigned long long)region, (unsigned long long)(region + size));
 
-    for (mach_vm_size_t offset = 0; offset < size; offset += vm_page_size) {
+    for (mach_vm_size_t offset = 0; offset < size; offset += page_size) {
       mach_vm_address_t page = region + offset;
       kern_return_t kr =
-          mach_vm_protect(taskPort, page, vm_page_size, FALSE, protection);
+          mach_vm_protect(taskPort, page, page_size, FALSE, protection);
       if (kr != KERN_SUCCESS) {
         printf(
             "Failed to adjust memory protection at 0x%llx (error 0x%x: %s)\n",
