@@ -1,3 +1,7 @@
+> **Archived:** This repository is no longer maintained.
+> 
+> Development continues here: **https://github.com/WineAndAqua/rosettax87** (maintained fork).
+
 # RosettaHack x87
 
 ## Overview
